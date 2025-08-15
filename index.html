@@ -2,12 +2,17 @@
 <html lang="zh-Hant">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <title>語音記帳（Firebase）</title>
+  <meta name="theme-color" content="#0b1020" />
+  <link rel="apple-touch-icon" sizes="180x180" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAALQAAAC0CAYAAAB8y0H7AAAABGdBTUEAALGPC/xhBQAAACBjSFJNAAB6JgAAgIQAAPoAAACA6AAAdTAAAOpgAAA6mAAAF3CculE8AAABNklEQVR42u3RMQEAIAwAsT9fM2lQk1Qm2kB2K2pJrQ9w0gAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHgN4Wm9xk8wHq3sJgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP8B0k0Yx8o3P8oAAAAASUVORK5CYII="/>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%230b1020'/%3E%3Ctext x='50%25' y='54%25' dominant-baseline='middle' text-anchor='middle' font-family='Arial' font-size='34' fill='%23e8ecff'%3E$%3C/text%3E%3C/svg%3E" />
   <style>
     :root { --bg:#0b1020; --card:#141a2e; --text:#e8ecff; --muted:#9aa3b2; --accent:#6aa5ff; --ok:#49c46b; --warn:#ffb951; --err:#ff6a6a; }
-    *{box-sizing:border-box} body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,"Noto Sans",sans-serif;background:linear-gradient(180deg,#0b1020,#0e1530);} 
-    header{position:sticky;top:0;background:rgba(11,16,32,.85);backdrop-filter:blur(6px);border-bottom:1px solid #1e2745;z-index:10}
+    *{box-sizing:border-box} body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,"Noto Sans",sans-serif;background:linear-gradient(180deg,#0b1020,#0e1530);padding-bottom:env(safe-area-inset-bottom);} 
+    header{position:sticky;top:0;background:rgba(11,16,32,.85);backdrop-filter:blur(6px);border-bottom:1px solid #1e2745;z-index:10;padding-top:env(safe-area-inset-top);}
     .container{max-width:1100px;margin:0 auto;padding:16px}
     .row{display:flex;gap:12px;flex-wrap:wrap}
     .card{background:var(--card);border:1px solid #1e2745;border-radius:16px;padding:16px;color:var(--text);box-shadow:0 10px 30px rgba(0,0,0,.25)}
@@ -77,7 +82,8 @@
           <option value="en-US">English (US)</option>
         </select>
         <label for="raw">語音轉文字 / 手動輸入</label>
-        <textarea id="raw" placeholder="例：昨天在7-11買咖啡55元，用LINE Pay"></textarea>
+        <textarea id="raw" inputmode="text" autocapitalize="off" autocomplete="off" autocorrect="off"></textarea>
+        <small class="muted" id="iosHint" style="display:none">💡 iPhone：若上方「開始錄音」不可用，請在鍵盤上點麥克風使用原生語音輸入。</small>
         <small class="muted">Safari iOS 對 Web Speech 支援有限；若無法錄音，請改用手動輸入。</small>
       </div>
 
@@ -221,6 +227,16 @@ service cloud.firestore {
   <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-firestore-compat.js"></script>
 
   <script>
+  // 先抓到需要用到的節點，避免 showSetup 早於宣告導致 Script error
+  const setupModal = document.getElementById('setupModal');
+  const cfgJson = document.getElementById('cfgJson');
+  const cfg_apiKey = document.getElementById('cfg_apiKey');
+  const cfg_authDomain = document.getElementById('cfg_authDomain');
+  const cfg_projectId = document.getElementById('cfg_projectId');
+  const cfg_storageBucket = document.getElementById('cfg_storageBucket');
+  const cfg_msg = document.getElementById('cfg_msg');
+  const cfg_appId = document.getElementById('cfg_appId');
+
   const LS_KEY = 'voice-expense-firebase-config';
   function readCfg(){ try{ return JSON.parse(localStorage.getItem(LS_KEY)||'{}'); }catch(e){ return {}; } }
   function writeCfg(cfg){ localStorage.setItem(LS_KEY, JSON.stringify(cfg||{})); }
@@ -246,7 +262,7 @@ service cloud.firestore {
     if (!cfg.apiKey || !cfg.projectId || !cfg.appId){ alert('至少需填 apiKey / projectId / appId'); return null; }
     return cfg;
   }
-  function showSetup(on){ setupModal.style.display = on? 'flex':'none'; }
+  function showSetup(on){ if (!setupModal) return; setupModal.style.display = on? 'flex':'none'; }
   const cfg0 = readCfg();
   if (!cfg0.apiKey){ showSetup(true); }
   btnSetup.onclick = ()=>{ applyCfgToFields(readCfg()); showSetup(true); };
@@ -280,10 +296,12 @@ service cloud.firestore {
   const btnExport = $('#btnExport');
   const sumMonth = $('#sumMonth');
 
-  btnSignIn.onclick = async()=>{ if (!assertApp()) return; const provider = new firebase.auth.GoogleAuthProvider(); await firebase.auth().signInWithPopup(provider); };
+  btnSignIn.onclick = async()=>{ if (!assertApp()) return; const provider = new firebase.auth.GoogleAuthProvider(); try{ const isIOS = /iP(hone|ad|od)/i.test(navigator.userAgent); if (isIOS) { await firebase.auth().signInWithRedirect(provider); } else { await firebase.auth().signInWithPopup(provider); } }catch(err){ console.error(err); alert('登入失敗：'+err.message); } };
   btnSignOut.onclick = ()=> firebase.auth().signOut();
-  firebase.auth().onAuthStateChanged(u=>{ const on = !!u; authDot.className = 'status-dot ' + (on? 'dot-ok':'dot-off'); btnSignIn.style.display = on? 'none':'inline-block'; btnSignOut.style.display = on? 'inline-block':'none'; btnSave.disabled = !on || !firebase.apps.length; if (on && firebase.apps.length) queryCurrentMonth(); });
+  firebase.auth().onAuthStateChanged(u=>{ const on = !!u; const authDot = document.getElementById('authDot'); const btnSignIn = document.getElementById('btnSignIn'); const btnSignOut = document.getElementById('btnSignOut'); const btnSave = document.getElementById('btnSave'); if (authDot) authDot.className = 'status-dot ' + (on? 'dot-ok':'dot-off'); if (btnSignIn) btnSignIn.style.display = on? 'none':'inline-block'; if (btnSignOut) btnSignOut.style.display = on? 'inline-block':'none'; if (btnSave) btnSave.disabled = !on || !firebase.apps.length; if (on && firebase.apps.length) queryCurrentMonth(); });
 
+  // iOS 無 SpeechRecognition 時，隱藏錄音鍵並顯示提示
+  (function(){ const SR0 = window.SpeechRecognition || window.webkitSpeechRecognition; if (/iP(hone|ad|od)/i.test(navigator.userAgent) && !SR0){ const b=document.getElementById('btnToggleRec'); if(b) b.style.display='none'; const hint=document.getElementById('iosHint'); if(hint) hint.style.display='block'; } })();
   let rec; let recognizing = false; let interim = '';
   function setupRecognition(){ const SR = window.SpeechRecognition || window.webkitSpeechRecognition; if (!SR) return null; const r = new SR(); r.lang = langSel.value || 'zh-TW'; r.continuous = true; r.interimResults = true; r.onstart = ()=>{recognizing = true; voiceDot.className='status-dot dot-ok'; btnToggleRec.textContent='停止錄音'}; r.onend = ()=>{recognizing = false; voiceDot.className='status-dot dot-off'; btnToggleRec.textContent='開始錄音'}; r.onresult = (e)=>{ let finalText = ''; for (let i=e.resultIndex;i<e.results.length;i++){ const t = e.results[i][0].transcript; if (e.results[i].isFinal) finalText += t + ' '; else interim = t; } raw.value = (raw.value + ' ' + finalText).trim(); }; r.onerror = (e)=>console.warn('Speech error', e); return r; }
   btnToggleRec.onclick = ()=>{ if (!rec) rec = setupRecognition(); if (!rec){ alert('此瀏覽器不支援語音辨識，請改用手動輸入'); return; } if (recognizing) rec.stop(); else { rec.lang = langSel.value; rec.start(); } };
@@ -310,6 +328,111 @@ service cloud.firestore {
   btnExport.onclick = async()=>{ if (!month.value) { alert('請先選擇月份'); return; } const list = await queryByMonth(month.value); const header = ['日期','時間','金額','幣別','分類','商家','付款方式','備註']; const lines = [header.join(',')]; for (const it of list){ const dt = it.txDate?.toDate?.() || new Date(); const dateKey = toDateKey(dt); const hh = String(dt.getHours()).padStart(2,'0'); const mm = String(dt.getMinutes()).padStart(2,'0'); const row = [dateKey, `${hh}:${mm}`, it.amount, it.currency||'TWD', (it.category||''), (it.merchant||''), (it.payment||''), (it.note||'')].map(x=>`"${String(x).replace(/"/g,'""')}"`).join(','); lines.push(row); } const csv = new Blob(["\ufeff"+lines.join('\n')], {type:'text/csv;charset=utf-8;'}); const a = document.createElement('a'); a.href = URL.createObjectURL(csv); a.download = `expenses_${month.value}.csv`; a.click(); };
 
   (function initMonth(){ const now = new Date(); month.value = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`; })();
+  // ==== PWA：動態建立 Manifest（單檔部署用）====
+  (function createManifest(){
+    try{
+      const manifest = {
+        name: "語音記帳（Firebase）",
+        short_name: "語音記帳",
+        description: "離線可用、支援 iOS 的語音記帳 PWA",
+        start_url: ".",
+        scope: ".",
+        display: "standalone",
+        background_color: "#0b1020",
+        theme_color: "#0b1020",
+        icons: [
+          { src: document.querySelector("link[rel='apple-touch-icon']").href, sizes: "180x180", type: "image/png", purpose:"any" },
+          { src: document.querySelector("link[rel='icon']").href, sizes: "64x64", type: "image/svg+xml", purpose:"any" }
+        ]
+      };
+      const blob = new Blob([JSON.stringify(manifest)], {type:'application/manifest+json'});
+      const url = URL.createObjectURL(blob);
+      let link = document.querySelector('link[rel="manifest"]');
+      if (!link){ link = document.createElement('link'); link.rel = 'manifest'; document.head.appendChild(link); }
+      link.href = url;
+    }catch(e){ console.warn('manifest 建立失敗', e); }
+  })();
+
+  // ==== PWA：Service Worker（單檔部署：以 Blob URL 註冊；若環境限制則自動跳過）====
+  (function registerSW(){
+    if (!('serviceWorker' in navigator)) return;
+    const swCode = `
+      const CACHE = 'vepwa-v1';
+      const ASSETS = [
+        './',
+        location.pathname,
+        'https://www.gstatic.com/firebasejs/9.22.2/firebase-app-compat.js',
+        'https://www.gstatic.com/firebasejs/9.22.2/firebase-auth-compat.js',
+        'https://www.gstatic.com/firebasejs/9.22.2/firebase-firestore-compat.js'
+      ];
+      self.addEventListener('install', e => {
+        e.waitUntil((async ()=>{
+          const c = await caches.open(CACHE);
+          try{ await c.addAll(ASSETS); }catch(err){ /* 有些來源可能無法快取，忽略 */ }
+          self.skipWaiting();
+        })());
+      });
+      self.addEventListener('activate', e => {
+        e.waitUntil((async()=>{
+          const keys = await caches.keys();
+          await Promise.all(keys.filter(k=>k!==CACHE).map(k=>caches.delete(k)));
+          self.clients.claim();
+        })());
+      });
+      self.addEventListener('fetch', e => {
+        const req = e.request;
+        const url = new URL(req.url);
+        if (req.method !== 'GET') return;
+        // 對導覽與靜態資源做 cache-first；其他走網路
+        if (req.mode === 'navigate' || ASSETS.some(a=>url.href.endsWith(a) || url.href===a)){
+          e.respondWith((async()=>{
+            const hit = await caches.match(req, {ignoreSearch:true});
+            if (hit) return hit;
+            try{
+              const res = await fetch(req);
+              const c = await caches.open(CACHE); c.put(req, res.clone());
+              return res;
+            }catch(err){
+              return new Response('<!doctype html><meta charset="utf-8"><title>離線中</title><body style="font-family:sans-serif;padding:20px">離線使用中（已快取的頁面可用）。</body>', {headers:{'Content-Type':'text/html;charset=utf-8'}});
+            }
+          })());
+        }
+      });
+    `;
+    try{
+      const url = URL.createObjectURL(new Blob([swCode], {type:'text/javascript'}));
+      navigator.serviceWorker.register(url).then(()=>{
+        console.log('PWA Service Worker 註冊完成');
+      }).catch(err=>{
+        console.warn('無法以 Blob 註冊 SW（可能環境限制）', err);
+      });
+    }catch(err){ console.warn('建立 SW 失敗', err); }
+  })();
+
+  // ==== PWA：安裝提示（Android/桌面可觸發；iOS 請用加入主畫面）====
+  let deferredPrompt = null;
+  window.addEventListener('beforeinstallprompt', (e)=>{ e.preventDefault(); deferredPrompt = e; showInstallButton(true); });
+  function showInstallButton(on){
+    let btn = document.getElementById('btnInstall');
+    if (!btn){ btn = document.createElement('button'); btn.id='btnInstall'; btn.textContent='📲 安裝到主畫面'; btn.className='ok';
+      const headerRow = document.querySelector('header .row'); headerRow && headerRow.appendChild(btn);
+    }
+    btn.style.display = on? 'inline-block':'none';
+    btn.onclick = async()=>{ if (!deferredPrompt){
+        alert('iPhone：請用 Safari 的分享 → 加入主畫面'); return;
+      }
+      deferredPrompt.prompt();
+      const { outcome } = await deferredPrompt.userChoice; // accepted / dismissed
+      deferredPrompt = null; showInstallButton(false);
+      console.log('A2HS outcome:', outcome);
+    };
+  }
+  // iOS 提示
+  if (/iP(hone|ad|od)/i.test(navigator.userAgent)){
+    showInstallButton(true);
+    const btn = document.getElementById('btnInstall');
+    if (btn) btn.onclick = ()=> alert('在 Safari：點分享按鈕 → 加入主畫面，即可當 App 使用');
+  }
   </script>
 </body>
 </html>
