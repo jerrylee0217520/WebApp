@@ -236,6 +236,10 @@ service cloud.firestore {
   const cfg_storageBucket = document.getElementById('cfg_storageBucket');
   const cfg_msg = document.getElementById('cfg_msg');
   const cfg_appId = document.getElementById('cfg_appId');
+  // 安全：顯式抓取這三個按鈕，避免部分瀏覽器不自動將 id 掛到 window 上
+  const btnSetup = document.getElementById('btnSetup');
+  const btnCfgCancel = document.getElementById('btnCfgCancel');
+  const btnCfgSave = document.getElementById('btnCfgSave');
 
   const LS_KEY = 'voice-expense-firebase-config';
   function readCfg(){ try{ return JSON.parse(localStorage.getItem(LS_KEY)||'{}'); }catch(e){ return {}; } }
@@ -316,15 +320,112 @@ service cloud.firestore {
   function detectMerchant(text){ const m = text.match(/在([\w\u4e00-\u9fa5\-\s]+?)(?:買|刷|付|消費|點|喝|吃)/); if (m) return m[1].trim(); const shops = ['7-11','7 11','全家','全聯','家樂福','Costco','星巴克','麥當勞','肯德基','鹽酥雞','Uber','Ubereats','Uber eats','Mos','Subway','IKEA']; for (const s of shops){ if (text.toLowerCase().includes(s.toLowerCase())) return s.replace(/\s+/g,''); } return ''; }
   function parseAll(){ const t = raw.value.trim(); if (!t){ alert('請先輸入語句'); return; } const d = parseWhen(t); const amt = parseAmount(t); const mer = detectMerchant(t); const cat = detectCategory(t); const pay = detectPayment(t); if (!isNaN(amt)) amount.value = amt.toFixed(0); const dk = toDateKey(d); date.value = dk; const hh = String(d.getHours()).padStart(2,'0'); const mm = String(d.getMinutes()).padStart(2,'0'); time.value = `${hh}:${mm}`; merchant.value = mer; category.value = cat; payment.value = pay; note.value = t; btnSave.disabled = !firebase.auth().currentUser; }
   btnParse.onclick = parseAll;
+  // ==== Firestore 查詢錯誤處理（索引／權限提示）====
+  function handleQueryError(err){
+    const msg = (err && err.message) ? String(err.message) : '';
+    const needIndex = (err && err.code === 'failed-precondition') || msg.toLowerCase().includes('index');
+    if (needIndex){
+      let url = '';
+      const i = msg.indexOf('https://');
+      if (i >= 0){
+        let end = msg.length;
+        for (const sep of [' ', '
+', ')', ']']){
+          const k = msg.indexOf(sep, i);
+          if (k >= 0 && k < end) end = k;
+        }
+        url = msg.slice(i, end);
+      }
+      if (url){
+        if (confirm('本月查詢需要建立 Firestore 索引。
+
+按「確定」開啟索引建立頁面，進入後直接按「Create」即可。')){
+          window.open(url, '_blank');
+        }
+      }else{
+        alert('本月查詢需要建立 Firestore 索引：集合 expenses；欄位建議 uid asc, dateKey desc, txDate desc。');
+      }
+    }else{
+      alert('查詢失敗：' + (msg || err));
+    }
+  }
+        url = msg.slice(i, end);
+      }
+      if (url){
+        if (confirm('本月查詢需要建立 Firestore 索引。
+
+按「確定」開啟索引建立頁面，進入後直接按「Create」即可。')){
+          window.open(url, '_blank');
+        }
+      }else{
+        alert('本月查詢需要建立 Firestore 索引：集合 expenses；欄位建議 uid asc, dateKey desc, txDate desc。');
+      }
+    }else{
+      alert('查詢失敗：' + (msg || err));
+    }
+  }
 
   function toTaipeiDate(dateStr, timeStr){ const d = new Date(`${dateStr||new Date().toISOString().slice(0,10)}T${timeStr||'12:00'}:00+08:00`); return d; }
-  btnSave.onclick = async()=>{ if (!firebase.auth().currentUser) { alert('請先登入'); return; } const uid = firebase.auth().currentUser.uid; const amt = parseFloat(amount.value||'0'); if (!amt || isNaN(amt)) { alert('請輸入金額'); return; } const d = toTaipeiDate(date.value, time.value); const docData = { uid, amount: amt, currency: 'TWD', txDate: firebase.firestore.Timestamp.fromDate(d), dateKey: toDateKey(d), year: d.getFullYear(), month: d.getMonth()+1, day: d.getDate(), merchant: merchant.value||'', category: category.value||'', payment: payment.value||'', note: note.value||'', source: 'voice' }; await firebase.firestore().collection('expenses').add({ ...docData, createdAt: firebase.firestore.FieldValue.serverTimestamp(), updatedAt: firebase.firestore.FieldValue.serverTimestamp(), }); raw.value=''; amount.value=''; merchant.value=''; category.value=''; payment.value=''; note.value=''; queryCurrentMonth(); alert('已儲存'); };
+  btnSave.onclick = async()=>{
+    if (!firebase.auth().currentUser) { alert('請先登入'); return; }
+    const uid = firebase.auth().currentUser.uid;
+    const amt = parseFloat(amount.value||'0');
+    if (!amt || isNaN(amt)) { alert('請輸入金額'); return; }
+    const d = toTaipeiDate(date.value, time.value);
+    const docData = {
+      uid, amount: amt, currency: 'TWD',
+      txDate: firebase.firestore.Timestamp.fromDate(d),
+      dateKey: toDateKey(d), year: d.getFullYear(), month: d.getMonth()+1, day: d.getDate(),
+      merchant: merchant.value||'', category: category.value||'', payment: payment.value||'',
+      note: note.value||'', source: (/iP(hone|ad|od)/i.test(navigator.userAgent)? 'ios':'web')
+    };
+    try{
+      await firebase.firestore().collection('expenses').add({
+        ...docData,
+        createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+      });
+      // 清空表單並先告知成功，避免後續查詢因索引問題讓使用者誤以為失敗
+      raw.value=''; amount.value=''; merchant.value=''; category.value=''; payment.value=''; note.value='';
+      alert('已儲存');
+      try{ await queryCurrentMonth(); }catch(err){ console.warn('Refresh after save failed:', err); handleQueryError(err); }
+    }catch(err){
+      console.error('Save failed:', err);
+      if (err && (err.code==='permission-denied' || /Missing or insufficient permissions/i.test(err.message||''))){
+        alert('儲存失敗：Firestore 規則拒絕。
+
+請在 Firestore 規則加入 /expenses 的寫入權限（至少允許已登入者寫入屬於自己的紀錄）。');
+      }else{
+        alert('儲存失敗：'+ (err && err.message? err.message : '未知錯誤'));
+      }
+    }
+  
 
   function monthRange(ym){ const [y,m] = ym.split('-').map(x=>parseInt(x,10)); const start = new Date(Date.UTC(y,m-1,1,0,0,0)); const end = new Date(Date.UTC(y,m,1,0,0,0)); const fmt = (d)=> d.toISOString().slice(0,10); return {startKey: fmt(start), endKey: fmt(end)}; }
   async function queryByMonth(ym){ if (!firebase.auth().currentUser) return []; const uid = firebase.auth().currentUser.uid; const {startKey,endKey} = monthRange(ym); const snap = await firebase.firestore().collection('expenses').where('uid','==',uid).where('dateKey','>=',startKey).where('dateKey','<',endKey).orderBy('dateKey','desc').orderBy('txDate','desc').get(); return snap.docs.map(d=>({id:d.id,...d.data()})); }
   function renderRows(list){ rows.innerHTML = ''; let sum = 0; for (const it of list){ sum += (it.amount||0); const dt = it.txDate?.toDate?.() || new Date(); const when = `${toDateKey(dt)} ${String(dt.getHours()).padStart(2,'0')}:${String(dt.getMinutes()).padStart(2,'0')}`; const tr = document.createElement('tr'); tr.innerHTML = `<td>${when}</td><td>${it.merchant||''}</td><td>${it.category||''}</td><td class="right">${(it.amount||0).toLocaleString('zh-TW')}</td><td>${it.payment||''}</td><td class="muted">${(it.note||'').slice(0,60)}</td>`; rows.appendChild(tr); } sumMonth.textContent = sum.toLocaleString('zh-TW'); }
-  async function queryCurrentMonth(){ const now = new Date(); const ym = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`; month.value = ym; const list = await queryByMonth(ym); renderRows(list); }
-  btnQuery.onclick = async()=>{ if (!month.value) { alert('請先選擇月份'); return; } const list = await queryByMonth(month.value); renderRows(list); };
+  async function queryCurrentMonth(){
+    const now = new Date();
+    const ym = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+    month.value = ym;
+    try{
+      const list = await queryByMonth(ym);
+      renderRows(list);
+    }catch(err){
+      console.error('queryCurrentMonth error', err);
+      handleQueryError(err);
+    }
+  }
+  btnQuery.onclick = async()=>{
+    if (!month.value) { alert('請先選擇月份'); return; }
+    try{
+      const list = await queryByMonth(month.value);
+      renderRows(list);
+    }catch(err){
+      console.error('btnQuery error', err);
+      handleQueryError(err);
+    }
+  };
   btnExport.onclick = async()=>{ if (!month.value) { alert('請先選擇月份'); return; } const list = await queryByMonth(month.value); const header = ['日期','時間','金額','幣別','分類','商家','付款方式','備註']; const lines = [header.join(',')]; for (const it of list){ const dt = it.txDate?.toDate?.() || new Date(); const dateKey = toDateKey(dt); const hh = String(dt.getHours()).padStart(2,'0'); const mm = String(dt.getMinutes()).padStart(2,'0'); const row = [dateKey, `${hh}:${mm}`, it.amount, it.currency||'TWD', (it.category||''), (it.merchant||''), (it.payment||''), (it.note||'')].map(x=>`"${String(x).replace(/"/g,'""')}"`).join(','); lines.push(row); } const csv = new Blob(["\ufeff"+lines.join('\n')], {type:'text/csv;charset=utf-8;'}); const a = document.createElement('a'); a.href = URL.createObjectURL(csv); a.download = `expenses_${month.value}.csv`; a.click(); };
 
   (function initMonth(){ const now = new Date(); month.value = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`; })();
