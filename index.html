@@ -1,0 +1,315 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>語音記帳（Firebase）</title>
+  <style>
+    :root { --bg:#0b1020; --card:#141a2e; --text:#e8ecff; --muted:#9aa3b2; --accent:#6aa5ff; --ok:#49c46b; --warn:#ffb951; --err:#ff6a6a; }
+    *{box-sizing:border-box} body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,"Noto Sans",sans-serif;background:linear-gradient(180deg,#0b1020,#0e1530);} 
+    header{position:sticky;top:0;background:rgba(11,16,32,.85);backdrop-filter:blur(6px);border-bottom:1px solid #1e2745;z-index:10}
+    .container{max-width:1100px;margin:0 auto;padding:16px}
+    .row{display:flex;gap:12px;flex-wrap:wrap}
+    .card{background:var(--card);border:1px solid #1e2745;border-radius:16px;padding:16px;color:var(--text);box-shadow:0 10px 30px rgba(0,0,0,.25)}
+    .grow{flex:1 1 320px}
+    h1{font-size:20px;margin:0;color:var(--text)}
+    h2{font-size:18px;margin:8px 0}
+    label{display:block;color:var(--muted);margin-top:8px;font-size:13px}
+    input,select,textarea{width:100%;padding:10px 12px;background:#0f1529;border:1px solid #233056;border-radius:12px;color:var(--text)}
+    textarea{min-height:80px;resize:vertical}
+    button{appearance:none;border:1px solid #233056;background:#1a2441;color:var(--text);padding:10px 14px;border-radius:12px;cursor:pointer}
+    button:hover{filter:brightness(1.1)}
+    button:disabled{opacity:.5;cursor:not-allowed}
+    .primary{background:linear-gradient(180deg,#2b66ff,#1b46bf);border-color:#2b66ff}
+    .ok{background:linear-gradient(180deg,#2a8f51,#1e6f3e);border-color:#2a8f51}
+    .warn{background:linear-gradient(180deg,#ce8b2d,#a56b1e);border-color:#ce8b2d}
+    .err{background:linear-gradient(180deg,#c83f3f,#9a2c2c);border-color:#c83f3f}
+    .pill{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border:1px solid #2a355c;border-radius:999px;background:#0e1530;color:#aeb7d6;font-size:12px}
+    .status-dot{width:8px;height:8px;border-radius:50%}
+    .dot-ok{background:var(--ok)} .dot-off{background:#777}
+    .grid{display:grid;gap:12px}
+    .grid-2{grid-template-columns:repeat(2,minmax(0,1fr))}
+    .grid-3{grid-template-columns:repeat(3,minmax(0,1fr))}
+    table{width:100%;border-collapse:collapse}
+    th,td{padding:8px 10px;border-bottom:1px solid #1f294a;text-align:left;color:#cfd7f0}
+    th{color:#8fa1d0;font-weight:600}
+    .right{text-align:right}
+    .muted{color:var(--muted)}
+    .code{font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,"Liberation Mono","Courier New",monospace;background:#0f1529;border:1px solid #233056;border-radius:10px;padding:10px;white-space:pre-wrap}
+    details{border:1px solid #233056;border-radius:12px;padding:12px;background:#0f1529}
+    summary{cursor:pointer;color:#a7b6e8}
+    footer{color:#7f8db2;padding:30px 0}
+    small{color:#93a0c7}
+
+    .modal {position:fixed;inset:0;background:rgba(0,0,0,.5);display:none;align-items:center;justify-content:center;z-index:50}
+    .modal .panel {background:var(--card);border:1px solid #233056;border-radius:16px;padding:16px;max-width:680px;width:92%}
+  </style>
+</head>
+<body>
+  <header>
+    <div class="container row" style="justify-content:space-between;align-items:center">
+      <h1>🎙️ 語音記帳（Firebase）</h1>
+      <div class="row" style="align-items:center;gap:8px">
+        <span class="pill"><span id="voiceDot" class="status-dot dot-off"></span> 語音</span>
+        <span class="pill"><span id="authDot" class="status-dot dot-off"></span> 登入</span>
+        <button id="btnSignIn">Google 登入</button>
+        <button id="btnSignOut" style="display:none">登出</button>
+        <button id="btnSetup" class="warn">⚙️ 設定</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="container grid" style="margin-top:14px">
+    <section class="card grid grid-2">
+      <div class="grow">
+        <h2>1) 語音 / 文字輸入</h2>
+        <div class="row">
+          <button class="primary" id="btnToggleRec">開始錄音</button>
+          <button id="btnClear">清空</button>
+          <button id="btnParse">🧠 解析</button>
+          <button class="ok" id="btnSave" disabled>✅ 儲存</button>
+        </div>
+        <label for="lang">辨識語言</label>
+        <select id="lang">
+          <option value="zh-TW">中文（台灣）</option>
+          <option value="zh-HK">中文（香港）</option>
+          <option value="zh-CN">中文（中國）</option>
+          <option value="en-US">English (US)</option>
+        </select>
+        <label for="raw">語音轉文字 / 手動輸入</label>
+        <textarea id="raw" placeholder="例：昨天在7-11買咖啡55元，用LINE Pay"></textarea>
+        <small class="muted">Safari iOS 對 Web Speech 支援有限；若無法錄音，請改用手動輸入。</small>
+      </div>
+
+      <div class="grow">
+        <h2>2) 解析結果（可編修）</h2>
+        <div class="grid grid-3">
+          <div>
+            <label>金額 (TWD)</label>
+            <input id="amount" type="number" step="0.01" placeholder="0"/>
+          </div>
+          <div>
+            <label>日期</label>
+            <input id="date" type="date"/>
+          </div>
+          <div>
+            <label>時間</label>
+            <input id="time" type="time"/>
+          </div>
+        </div>
+        <div class="grid grid-3">
+          <div>
+            <label>店家 / 對象</label>
+            <input id="merchant" placeholder="7-11"/>
+          </div>
+          <div>
+            <label>分類</label>
+            <input id="category" placeholder="餐飲 / 交通 / 訂閱…"/>
+          </div>
+          <div>
+            <label>付款方式</label>
+            <input id="payment" placeholder="現金 / 信用卡 / LINE Pay…"/>
+          </div>
+        </div>
+        <label>備註 / 原句</label>
+        <textarea id="note"></textarea>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>3) 查詢與匯出</h2>
+      <div class="row" style="align-items:end">
+        <div>
+          <label>月份</label>
+          <input id="month" type="month"/>
+        </div>
+        <button id="btnQuery">🔎 讀取本月</button>
+        <button id="btnExport">⬇️ 匯出CSV</button>
+        <div class="pill"><span>本月合計：</span><strong id="sumMonth">0</strong> 元</div>
+      </div>
+      <div style="overflow:auto; max-height:380px; margin-top:10px">
+        <table>
+          <thead>
+            <tr><th>日期時間</th><th>店家</th><th>分類</th><th class="right">金額</th><th>付款</th><th>備註</th></tr>
+          </thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>快速說明</h2>
+      <ol>
+        <li>第一次使用請點右上 <strong>⚙️ 設定</strong>，貼上 Firebase Config（只需一次，會存到本機）。</li>
+        <li>Firestore 規則：已為 <code>expenses</code> 集合做「本人可讀寫」；其他你的既有集合維持「已登入可讀寫」。</li>
+        <li>登入 Google 後即可語音或手動輸入，按「🧠 解析」→「✅ 儲存」。</li>
+      </ol>
+      <details>
+        <summary>點我展開：建議 Firestore 規則（含管理者 UID）</summary>
+        <pre class="code">rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isSignedIn() { return request.auth != null; }
+    function isAdmin() {
+      return request.auth != null && request.auth.uid in ['KcaxVmcqI3RzxWdhCl2dhVGPxti1'];
+    }
+    match /expenses/{id} {
+      allow read: if isSignedIn() && request.auth.uid == resource.data.uid;
+      allow create: if isSignedIn()
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.keys().hasAll(['uid','amount','currency','txDate','dateKey'])
+        && request.resource.data.amount is number
+        && request.resource.data.currency is string
+        && request.resource.data.txDate is timestamp
+        && request.resource.data.dateKey is string;
+      allow update, delete: if isSignedIn() && (request.auth.uid == resource.data.uid || isAdmin());
+    }
+
+    match /parking_records/{recordId} { allow read, write: if isSignedIn(); }
+    match /daily_logs/{logId} { allow read, write: if isSignedIn(); }
+    match /app_config/{docId} { allow read, write: if isSignedIn(); }
+    match /units/{unitId} { allow read, write: if isSignedIn(); }
+    match /inspection_logs/{logId} { allow read, write: if isSignedIn(); }
+    match /unit_parking_spots/{unitId} { allow read, write: if isSignedIn(); }
+    match /artifacts/{appId}/public/data/usage_logs/{logId} { allow read, write: if isSignedIn(); }
+    match /admins/{uid} { allow read, write: if isSignedIn(); }
+    match /artifacts/{appId}/public/{document=**} { allow read: if true; }
+  }
+}
+</pre>
+      </details>
+    </section>
+
+    <footer class="container">
+      <small>提示語例：
+        「今天全聯買菜 385 元刷聯邦卡」、
+        「昨天在 7-11 咖啡 55 元用 LINE Pay」、
+        「8/3 Uber 220 交通」。
+      </small>
+    </footer>
+  </main>
+
+  <div class="modal" id="setupModal">
+    <div class="panel">
+      <h2 style="margin-top:0">⚙️ Firebase 設定</h2>
+      <p class="muted">可直接貼上 Firebase Console 複製的 <strong>config JSON</strong>（含 apiKey / projectId 等），或逐欄填寫。此資訊只保存在你的瀏覽器本機。</p>
+      <textarea id="cfgJson" class="code" placeholder='{
+  "apiKey": "...",
+  "authDomain": "...",
+  "projectId": "...",
+  "storageBucket": "...",
+  "messagingSenderId": "...",
+  "appId": "..."
+}'></textarea>
+      <div class="grid grid-3" style="margin-top:8px">
+        <div><label>apiKey</label><input id="cfg_apiKey"></div>
+        <div><label>authDomain</label><input id="cfg_authDomain"></div>
+        <div><label>projectId</label><input id="cfg_projectId"></div>
+        <div><label>storageBucket</label><input id="cfg_storageBucket"></div>
+        <div><label>messagingSenderId</label><input id="cfg_msg"></div>
+        <div><label>appId</label><input id="cfg_appId"></div>
+      </div>
+      <div class="row" style="margin-top:12px;justify-content:flex-end">
+        <button id="btnCfgCancel">取消</button>
+        <button class="ok" id="btnCfgSave">💾 儲存並初始化</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-firestore-compat.js"></script>
+
+  <script>
+  const LS_KEY = 'voice-expense-firebase-config';
+  function readCfg(){ try{ return JSON.parse(localStorage.getItem(LS_KEY)||'{}'); }catch(e){ return {}; } }
+  function writeCfg(cfg){ localStorage.setItem(LS_KEY, JSON.stringify(cfg||{})); }
+  function applyCfgToFields(cfg){
+    cfg_apiKey.value = cfg.apiKey||'';
+    cfg_authDomain.value = cfg.authDomain||'';
+    cfg_projectId.value = cfg.projectId||'';
+    cfg_storageBucket.value = cfg.storageBucket||'';
+    cfg_msg.value = cfg.messagingSenderId||'';
+    cfg_appId.value = cfg.appId||'';
+    cfgJson.value = Object.keys(cfg).length? JSON.stringify(cfg,null,2): '';
+  }
+  function collectCfg(){
+    let cfg = {};
+    const raw = cfgJson.value.trim();
+    if (raw){ try{ cfg = JSON.parse(raw); }catch(e){ alert('JSON 格式錯誤'); return null; } }
+    cfg.apiKey = cfg.apiKey || cfg_apiKey.value.trim();
+    cfg.authDomain = cfg.authDomain || cfg_authDomain.value.trim();
+    cfg.projectId = cfg.projectId || cfg_projectId.value.trim();
+    cfg.storageBucket = cfg.storageBucket || cfg_storageBucket.value.trim();
+    cfg.messagingSenderId = cfg.messagingSenderId || cfg_msg.value.trim();
+    cfg.appId = cfg.appId || cfg_appId.value.trim();
+    if (!cfg.apiKey || !cfg.projectId || !cfg.appId){ alert('至少需填 apiKey / projectId / appId'); return null; }
+    return cfg;
+  }
+  function showSetup(on){ setupModal.style.display = on? 'flex':'none'; }
+  const cfg0 = readCfg();
+  if (!cfg0.apiKey){ showSetup(true); }
+  btnSetup.onclick = ()=>{ applyCfgToFields(readCfg()); showSetup(true); };
+  btnCfgCancel.onclick = ()=> showSetup(false);
+  btnCfgSave.onclick = ()=>{ const cfg = collectCfg(); if (!cfg) return; writeCfg(cfg); location.reload(); };
+
+  (function initFirebase(){ const cfg = readCfg(); if (!cfg.apiKey){ return; } firebase.initializeApp(cfg); })();
+  function assertApp(){ if (!firebase.apps.length){ alert('請先點右上「設定」，貼上 Firebase Config'); return false; } return true; }
+
+  const $ = (s)=>document.querySelector(s);
+  const btnSignIn = $('#btnSignIn');
+  const btnSignOut = $('#btnSignOut');
+  const authDot = $('#authDot');
+  const voiceDot = $('#voiceDot');
+  const btnToggleRec = $('#btnToggleRec');
+  const btnClear = $('#btnClear');
+  const btnParse = $('#btnParse');
+  const btnSave = $('#btnSave');
+  const raw = $('#raw');
+  const langSel = $('#lang');
+  const amount = $('#amount');
+  const date = $('#date');
+  const time = $('#time');
+  const merchant = $('#merchant');
+  const category = $('#category');
+  const payment = $('#payment');
+  const note = $('#note');
+  const rows = $('#rows');
+  const month = $('#month');
+  const btnQuery = $('#btnQuery');
+  const btnExport = $('#btnExport');
+  const sumMonth = $('#sumMonth');
+
+  btnSignIn.onclick = async()=>{ if (!assertApp()) return; const provider = new firebase.auth.GoogleAuthProvider(); await firebase.auth().signInWithPopup(provider); };
+  btnSignOut.onclick = ()=> firebase.auth().signOut();
+  firebase.auth().onAuthStateChanged(u=>{ const on = !!u; authDot.className = 'status-dot ' + (on? 'dot-ok':'dot-off'); btnSignIn.style.display = on? 'none':'inline-block'; btnSignOut.style.display = on? 'inline-block':'none'; btnSave.disabled = !on || !firebase.apps.length; if (on && firebase.apps.length) queryCurrentMonth(); });
+
+  let rec; let recognizing = false; let interim = '';
+  function setupRecognition(){ const SR = window.SpeechRecognition || window.webkitSpeechRecognition; if (!SR) return null; const r = new SR(); r.lang = langSel.value || 'zh-TW'; r.continuous = true; r.interimResults = true; r.onstart = ()=>{recognizing = true; voiceDot.className='status-dot dot-ok'; btnToggleRec.textContent='停止錄音'}; r.onend = ()=>{recognizing = false; voiceDot.className='status-dot dot-off'; btnToggleRec.textContent='開始錄音'}; r.onresult = (e)=>{ let finalText = ''; for (let i=e.resultIndex;i<e.results.length;i++){ const t = e.results[i][0].transcript; if (e.results[i].isFinal) finalText += t + ' '; else interim = t; } raw.value = (raw.value + ' ' + finalText).trim(); }; r.onerror = (e)=>console.warn('Speech error', e); return r; }
+  btnToggleRec.onclick = ()=>{ if (!rec) rec = setupRecognition(); if (!rec){ alert('此瀏覽器不支援語音辨識，請改用手動輸入'); return; } if (recognizing) rec.stop(); else { rec.lang = langSel.value; rec.start(); } };
+  btnClear.onclick = ()=>{ raw.value=''; };
+
+  function toDateKey(d){ const y=d.getFullYear(); const m=String(d.getMonth()+1).padStart(2,'0'); const da=String(d.getDate()).padStart(2,'0'); return `${y}-${m}-${da}`; }
+  function parseWhen(text){ text = text.trim(); const now = new Date(); const taipeiNow = new Date(now.toLocaleString('en-US',{timeZone:'Asia/Taipei'})); let d = new Date(taipeiNow); if (/前天/.test(text)) d.setDate(d.getDate()-2); else if (/(昨|昨天|昨日)/.test(text)) d.setDate(d.getDate()-1); else if (/今天|今日|剛剛|剛才/.test(text)) { } else { const mdy = text.match(/(20\d{2})[\/\-\.](\d{1,2})[\/\-\.](\d{1,2})/); const md = text.match(/(\d{1,2})[\/\-\.月](\d{1,2})(?:日)?/); if (mdy){ d = new Date(`${mdy[1]}-${mdy[2]}-${mdy[3]}T12:00:00+08:00`); } else if (md){ const Y = taipeiNow.getFullYear(); d = new Date(`${Y}-${md[1]}-${md[2]}T12:00:00+08:00`); } } const hm = text.match(/(\d{1,2})[:：](\d{2})/); if (hm){ d.setHours(parseInt(hm[1],10), parseInt(hm[2],10), 0, 0); } return d; }
+  function parseAmount(text){ const m1 = text.match(/(-?\d+[\.,]?\d*)\s*(?:元|塊|圓)/); if (m1) return parseFloat(m1[1].replace(',','')); const m2 = text.match(/(?:NT\$?|新台幣)\s*(-?\d+[\.,]?\d*)/i); if (m2) return parseFloat(m2[1].replace(',','')); const nums = [...text.matchAll(/\b(\d{1,6})(?:\.\d{1,2})?\b/g)].map(x=>x[0]); if (nums.length){ return parseFloat(nums[nums.length-1]); } return NaN; }
+  const categoryRules = [ {k:/咖啡|餐|吃|便當|早午餐|晚餐|麥當勞|肯德基|星巴克|火鍋|鹽酥雞|飲料|珍奶|手搖/i,c:'餐飲'}, {k:/捷運|公車|計程車|uber|uber\s*eat|機車|油錢|加油|停車|高鐵|台鐵|客運/i,c:'交通'}, {k:/7[-—]?11|7\s*11|全家|全聯|家樂福|costco|頂好|美廉社|愛買|超市|便利商店/i,c:'雜貨'}, {k:/房租|租金|管理費|水費|電費|瓦斯|第四台|網路|光纖/i,c:'居家'}, {k:/牙醫|醫院|藥局|健保|掛號|體檢|看診|藥|口罩/i,c:'醫療'}, {k:/衣|褲|鞋|外套|uniqlo|zara|muji|無印/i,c:'服飾'}, {k:/書|書店|雜誌|課程|學費|補習|教材/i,c:'教育'}, {k:/netflix|spotify|apple\s*music|youtube\s*premium|訂閱/i,c:'訂閱'}, {k:/禮物|紅包|捐款|奉獻/i,c:'人情'} ];
+  function detectCategory(text){ for (const r of categoryRules){ if (r.k.test(text)) return r.c; } return ''; }
+  function detectPayment(text){ if (/line\s*pay/i.test(text)) return 'LINE Pay'; if (/街口|JKOPAY/i.test(text)) return '街口支付'; if (/apple\s*pay/i.test(text)) return 'Apple Pay'; if (/google\s*pay/i.test(text)) return 'Google Pay'; if (/現金/.test(text)) return '現金'; if (/刷卡|信用卡|visa|master|jcb/i.test(text)) return '信用卡'; if (/轉帳|匯款/.test(text)) return '轉帳'; return ''; }
+  function detectMerchant(text){ const m = text.match(/在([\w\u4e00-\u9fa5\-\s]+?)(?:買|刷|付|消費|點|喝|吃)/); if (m) return m[1].trim(); const shops = ['7-11','7 11','全家','全聯','家樂福','Costco','星巴克','麥當勞','肯德基','鹽酥雞','Uber','Ubereats','Uber eats','Mos','Subway','IKEA']; for (const s of shops){ if (text.toLowerCase().includes(s.toLowerCase())) return s.replace(/\s+/g,''); } return ''; }
+  function parseAll(){ const t = raw.value.trim(); if (!t){ alert('請先輸入語句'); return; } const d = parseWhen(t); const amt = parseAmount(t); const mer = detectMerchant(t); const cat = detectCategory(t); const pay = detectPayment(t); if (!isNaN(amt)) amount.value = amt.toFixed(0); const dk = toDateKey(d); date.value = dk; const hh = String(d.getHours()).padStart(2,'0'); const mm = String(d.getMinutes()).padStart(2,'0'); time.value = `${hh}:${mm}`; merchant.value = mer; category.value = cat; payment.value = pay; note.value = t; btnSave.disabled = !firebase.auth().currentUser; }
+  btnParse.onclick = parseAll;
+
+  function toTaipeiDate(dateStr, timeStr){ const d = new Date(`${dateStr||new Date().toISOString().slice(0,10)}T${timeStr||'12:00'}:00+08:00`); return d; }
+  btnSave.onclick = async()=>{ if (!firebase.auth().currentUser) { alert('請先登入'); return; } const uid = firebase.auth().currentUser.uid; const amt = parseFloat(amount.value||'0'); if (!amt || isNaN(amt)) { alert('請輸入金額'); return; } const d = toTaipeiDate(date.value, time.value); const docData = { uid, amount: amt, currency: 'TWD', txDate: firebase.firestore.Timestamp.fromDate(d), dateKey: toDateKey(d), year: d.getFullYear(), month: d.getMonth()+1, day: d.getDate(), merchant: merchant.value||'', category: category.value||'', payment: payment.value||'', note: note.value||'', source: 'voice' }; await firebase.firestore().collection('expenses').add({ ...docData, createdAt: firebase.firestore.FieldValue.serverTimestamp(), updatedAt: firebase.firestore.FieldValue.serverTimestamp(), }); raw.value=''; amount.value=''; merchant.value=''; category.value=''; payment.value=''; note.value=''; queryCurrentMonth(); alert('已儲存'); };
+
+  function monthRange(ym){ const [y,m] = ym.split('-').map(x=>parseInt(x,10)); const start = new Date(Date.UTC(y,m-1,1,0,0,0)); const end = new Date(Date.UTC(y,m,1,0,0,0)); const fmt = (d)=> d.toISOString().slice(0,10); return {startKey: fmt(start), endKey: fmt(end)}; }
+  async function queryByMonth(ym){ if (!firebase.auth().currentUser) return []; const uid = firebase.auth().currentUser.uid; const {startKey,endKey} = monthRange(ym); const snap = await firebase.firestore().collection('expenses').where('uid','==',uid).where('dateKey','>=',startKey).where('dateKey','<',endKey).orderBy('dateKey','desc').orderBy('txDate','desc').get(); return snap.docs.map(d=>({id:d.id,...d.data()})); }
+  function renderRows(list){ rows.innerHTML = ''; let sum = 0; for (const it of list){ sum += (it.amount||0); const dt = it.txDate?.toDate?.() || new Date(); const when = `${toDateKey(dt)} ${String(dt.getHours()).padStart(2,'0')}:${String(dt.getMinutes()).padStart(2,'0')}`; const tr = document.createElement('tr'); tr.innerHTML = `<td>${when}</td><td>${it.merchant||''}</td><td>${it.category||''}</td><td class="right">${(it.amount||0).toLocaleString('zh-TW')}</td><td>${it.payment||''}</td><td class="muted">${(it.note||'').slice(0,60)}</td>`; rows.appendChild(tr); } sumMonth.textContent = sum.toLocaleString('zh-TW'); }
+  async function queryCurrentMonth(){ const now = new Date(); const ym = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`; month.value = ym; const list = await queryByMonth(ym); renderRows(list); }
+  btnQuery.onclick = async()=>{ if (!month.value) { alert('請先選擇月份'); return; } const list = await queryByMonth(month.value); renderRows(list); };
+  btnExport.onclick = async()=>{ if (!month.value) { alert('請先選擇月份'); return; } const list = await queryByMonth(month.value); const header = ['日期','時間','金額','幣別','分類','商家','付款方式','備註']; const lines = [header.join(',')]; for (const it of list){ const dt = it.txDate?.toDate?.() || new Date(); const dateKey = toDateKey(dt); const hh = String(dt.getHours()).padStart(2,'0'); const mm = String(dt.getMinutes()).padStart(2,'0'); const row = [dateKey, `${hh}:${mm}`, it.amount, it.currency||'TWD', (it.category||''), (it.merchant||''), (it.payment||''), (it.note||'')].map(x=>`"${String(x).replace(/"/g,'""')}"`).join(','); lines.push(row); } const csv = new Blob(["\ufeff"+lines.join('\n')], {type:'text/csv;charset=utf-8;'}); const a = document.createElement('a'); a.href = URL.createObjectURL(csv); a.download = `expenses_${month.value}.csv`; a.click(); };
+
+  (function initMonth(){ const now = new Date(); month.value = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`; })();
+  </script>
+</body>
+</html>
