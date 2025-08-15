@@ -156,29 +156,23 @@
 service cloud.firestore {
   match /databases/{database}/documents {
     function isSignedIn() { return request.auth != null; }
-    function isAdmin() {
-      return request.auth != null && request.auth.uid in ['KcaxVmcqI3RzxWdhCl2dhVGPxti1'];
-    }
+
+    // ★ 放鬆版：已登入者即可對 expenses 讀寫（開發/排錯用）
     match /expenses/{id} {
-      allow read: if isSignedIn() && request.auth.uid == resource.data.uid;
-      allow create: if isSignedIn()
-        && request.resource.data.uid == request.auth.uid
-        && request.resource.data.keys().hasAll(['uid','amount','currency','txDate','dateKey'])
-        && request.resource.data.amount is number
-        && request.resource.data.currency is string
-        && request.resource.data.txDate is timestamp
-        && request.resource.data.dateKey is string;
-      allow update, delete: if isSignedIn() && (request.auth.uid == resource.data.uid || isAdmin());
+      allow read, write: if isSignedIn();
     }
 
+    // 你其餘集合可維持原本規則（登入可讀寫），或再逐步細化
     match /parking_records/{recordId} { allow read, write: if isSignedIn(); }
-    match /daily_logs/{logId} { allow read, write: if isSignedIn(); }
-    match /app_config/{docId} { allow read, write: if isSignedIn(); }
-    match /units/{unitId} { allow read, write: if isSignedIn(); }
-    match /inspection_logs/{logId} { allow read, write: if isSignedIn(); }
-    match /unit_parking_spots/{unitId} { allow read, write: if isSignedIn(); }
+    match /daily_logs/{logId}       { allow read, write: if isSignedIn(); }
+    match /app_config/{docId}       { allow read, write: if isSignedIn(); }
+    match /units/{unitId}           { allow read, write: if isSignedIn(); }
+    match /inspection_logs/{logId}  { allow read, write: if isSignedIn(); }
+    match /unit_parking_spots/{u}   { allow read, write: if isSignedIn(); }
     match /artifacts/{appId}/public/data/usage_logs/{logId} { allow read, write: if isSignedIn(); }
-    match /admins/{uid} { allow read, write: if isSignedIn(); }
+    match /admins/{uid}             { allow read, write: if isSignedIn(); }
+
+    // 公開檔案維持可讀
     match /artifacts/{appId}/public/{document=**} { allow read: if true; }
   }
 }
@@ -342,25 +336,10 @@ service cloud.firestore {
 按「確定」開啟索引建立頁面，進入後直接按「Create」即可。')){
           window.open(url, '_blank');
         }
-      }else{
+      } else {
         alert('本月查詢需要建立 Firestore 索引：集合 expenses；欄位建議 uid asc, dateKey desc, txDate desc。');
       }
-    }else{
-      alert('查詢失敗：' + (msg || err));
-    }
-  }
-        url = msg.slice(i, end);
-      }
-      if (url){
-        if (confirm('本月查詢需要建立 Firestore 索引。
-
-按「確定」開啟索引建立頁面，進入後直接按「Create」即可。')){
-          window.open(url, '_blank');
-        }
-      }else{
-        alert('本月查詢需要建立 Firestore 索引：集合 expenses；欄位建議 uid asc, dateKey desc, txDate desc。');
-      }
-    }else{
+    } else {
       alert('查詢失敗：' + (msg || err));
     }
   }
@@ -385,7 +364,6 @@ service cloud.firestore {
         createdAt: firebase.firestore.FieldValue.serverTimestamp(),
         updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
       });
-      // 清空表單並先告知成功，避免後續查詢因索引問題讓使用者誤以為失敗
       raw.value=''; amount.value=''; merchant.value=''; category.value=''; payment.value=''; note.value='';
       alert('已儲存');
       try{ await queryCurrentMonth(); }catch(err){ console.warn('Refresh after save failed:', err); handleQueryError(err); }
@@ -394,12 +372,12 @@ service cloud.firestore {
       if (err && (err.code==='permission-denied' || /Missing or insufficient permissions/i.test(err.message||''))){
         alert('儲存失敗：Firestore 規則拒絕。
 
-請在 Firestore 規則加入 /expenses 的寫入權限（至少允許已登入者寫入屬於自己的紀錄）。');
+請在 Firestore 規則加入 /expenses 的寫入權限（至少允許已登入者寫入）。');
       }else{
         alert('儲存失敗：'+ (err && err.message? err.message : '未知錯誤'));
       }
     }
-  
+  };
 
   function monthRange(ym){ const [y,m] = ym.split('-').map(x=>parseInt(x,10)); const start = new Date(Date.UTC(y,m-1,1,0,0,0)); const end = new Date(Date.UTC(y,m,1,0,0,0)); const fmt = (d)=> d.toISOString().slice(0,10); return {startKey: fmt(start), endKey: fmt(end)}; }
   async function queryByMonth(ym){ if (!firebase.auth().currentUser) return []; const uid = firebase.auth().currentUser.uid; const {startKey,endKey} = monthRange(ym); const snap = await firebase.firestore().collection('expenses').where('uid','==',uid).where('dateKey','>=',startKey).where('dateKey','<',endKey).orderBy('dateKey','desc').orderBy('txDate','desc').get(); return snap.docs.map(d=>({id:d.id,...d.data()})); }
